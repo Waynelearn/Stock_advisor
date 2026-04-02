@@ -1,0 +1,38 @@
+# Secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# State files (contain runtime data, not code)
+alerts/.*_state.json
+alerts/.message_log.json
+alerts/.interaction_log.json
+alerts/.poll_offset.json
+alerts/.recent_headlines.json
+alerts/.trade_journal.json
+alerts/.catalyst_cache.json
+alerts/.yt_cookies.txt
+
+# Analysis output (large, generated)
+analysis/
+
+# Logs
+alerts/cron.log
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
