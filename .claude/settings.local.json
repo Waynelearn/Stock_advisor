@@ -77,7 +77,11 @@
       "Bash(git reset:*)",
       "Bash(git push:*)",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'Repo: {d.get\\(\\\\\"full_name\\\\\",\\\\\"NOT FOUND\\\\\"\\)}'\\); print\\(f'Private: {d.get\\(\\\\\"private\\\\\"\\)}'\\); print\\(f'Permissions: {d.get\\(\\\\\"permissions\\\\\",\\\\\"N/A\\\\\"\\)}'\\); print\\(f'Message: {d.get\\(\\\\\"message\\\\\",\\\\\"OK\\\\\"\\)}'\\)\")",
-      "Bash(git remote:*)"
+      "Bash(git remote:*)",
+      "Bash(python3:*)",
+      "Bash(xxd /home/wayne/website/mu_advisor/alerts/.catalyst_state.json)",
+      "Bash(mv /tmp/cron_tail.log /home/wayne/website/mu_advisor/alerts/cron.log)",
+      "WebFetch(domain:stockstotrade.com)"
     ]
   }
 }
