@@ -19,10 +19,8 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), ".monitor_state.json")
 
 def load_state() -> dict:
     """Load persisted state (last known levels, alerted flags)."""
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "last_mu_price": None,
         "last_vix": None,
         "prev_close": None,
@@ -32,13 +30,13 @@ def load_state() -> dict:
         "last_spread_alert_level": None,
         "last_spread_alert_time": None,
         "date": None,
-    }
+    })
 
 
 def save_state(state: dict):
     """Persist state to disk."""
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def reset_daily_state(state: dict, today: str, prev_close: float):

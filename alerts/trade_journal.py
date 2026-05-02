@@ -15,15 +15,21 @@ JOURNAL_FILE = os.path.join(os.path.dirname(__file__), ".trade_journal.json")
 
 
 def load_journal() -> list:
-    if os.path.exists(JOURNAL_FILE):
-        with open(JOURNAL_FILE) as f:
-            return json.load(f)
+    import os as _os
+    from .state_utils import safe_load_state
+    if not _os.path.exists(JOURNAL_FILE):
+        return []
+    # safe_load_state handles corrupted/empty files gracefully
+    result = safe_load_state(JOURNAL_FILE, {})
+    # JOURNAL_FILE stores a JSON list, not a dict
+    if isinstance(result, list):
+        return result
     return []
 
 
 def save_journal(journal: list):
-    with open(JOURNAL_FILE, "w") as f:
-        json.dump(journal, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(JOURNAL_FILE, journal)
 
 
 def log_trade(action: str, details: str = "") -> dict:

@@ -32,19 +32,17 @@ RATIO_SHIFT_THRESHOLD = 0.20  # 20% shift from previous check
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "last_check_date": None,
         "prev_bullish_ratio": None,
         "prev_reddit_volume": None,
-    }
+    })
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _fetch_stocktwits() -> dict:

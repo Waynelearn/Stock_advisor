@@ -36,29 +36,21 @@ IV_CHANGE_THRESHOLD = 5.0       # Alert when IV changes by this many percentage 
 
 def _load_state() -> dict:
     """Load persisted state from disk."""
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "date": None,
         "prev_oi": {},
         "prev_pcr": None,
         "prev_iv": {},
         "last_pcr_alert_value": None,
         "last_liquidity_alert_date": None,
-    }
+    })
 
 
 def _save_state(state: dict):
     """Persist state to disk."""
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception as e:
-        print(f"[OPTIONS FLOW] State save error: {e}")
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 # ─── Option Chain Fetching ───────────────────────────────────────────────────

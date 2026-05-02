@@ -23,15 +23,13 @@ DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"last_rec_date": None}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_rec_date": None})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _get_catalysts_before_expiry(expiry_str: str) -> list[dict]:

@@ -18,21 +18,19 @@ SI_PCT_HIGH = 8.0              # Short % of float above this is notable
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "last_alert_date": None,
         "last_report_date": None,
         "prev_shares_short": None,
         "prev_short_pct": None,
         "history": [],
-    }
+    })
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _fmt_number(val: float) -> str:

@@ -95,27 +95,19 @@ TRACKED_EVENTS = [
 # =====================================================================
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "seen_hashes": [],
         "countdown_sent": {},
         "custom_events": [],
-    }
+    })
 
 
 def save_state(state: dict):
     # Keep seen_hashes bounded
     state["seen_hashes"] = state["seen_hashes"][-500:]
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _content_hash(text: str) -> str:

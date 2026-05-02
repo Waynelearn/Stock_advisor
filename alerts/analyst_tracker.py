@@ -12,15 +12,13 @@ TICKERS = [POSITION["ticker"]] + [p for p in PEERS if p != "SOXX"]
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"seen": {}}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"seen": {}})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def check_analyst_changes():

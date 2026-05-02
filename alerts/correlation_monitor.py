@@ -14,19 +14,17 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), ".correlation_state.json")
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "date": None,
         "last_divergence_alert_date": None,
         "last_vix_anomaly_date": None,
-    }
+    })
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def check_mu_sox_divergence():

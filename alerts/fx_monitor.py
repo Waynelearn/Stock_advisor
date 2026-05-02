@@ -29,15 +29,13 @@ DXY_MOVE_THRESHOLD = 0.3    # DXY is less volatile, lower threshold
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"last_alert_date": None, "prev_prices": {}}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_alert_date": None, "prev_prices": {}})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def check_fx_moves():

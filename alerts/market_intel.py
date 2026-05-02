@@ -29,15 +29,13 @@ SECTOR_ETFS = {
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"last_rotation_date": None, "last_si_date": None}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_rotation_date": None, "last_si_date": None})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def check_short_interest():

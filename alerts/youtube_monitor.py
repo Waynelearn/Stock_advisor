@@ -132,22 +132,14 @@ MAX_ALERTS_PER_CYCLE = 5
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"seen_ids": [], "initialized": False}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"seen_ids": [], "initialized": False})
 
 
 def save_state(state: dict):
     state["seen_ids"] = state["seen_ids"][-500:]
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception:
-        pass
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _fetch_channel_feed(channel_id: str) -> list[dict]:
@@ -187,8 +179,8 @@ def _fetch_channel_feed(channel_id: str) -> list[dict]:
                 "channel": author.text if author is not None else "Unknown",
             })
         return videos
-    except Exception as e:
-        print(f"[YT FEED ERROR] channel {channel_id}: {e}")
+    except Exception:
+        # Silently skip — YouTube feeds return 404/500 frequently
         return []
 
 

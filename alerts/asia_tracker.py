@@ -29,22 +29,14 @@ ALIGNED_MOVE_PCT = 1.0  # Alert if all three move same direction >1%
 
 def load_state() -> dict:
     """Load persisted state."""
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"last_alert_date": None}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_alert_date": None})
 
 
 def save_state(state: dict):
     """Persist state to disk."""
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-    except Exception as e:
-        print(f"[ASIA STATE ERROR] {e}")
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def get_daily_change(ticker: str) -> dict:

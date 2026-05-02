@@ -41,15 +41,13 @@ PROB_SHIFT_THRESHOLD = 5.0   # Alert if probability shifts >5% from last check
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"last_alert_date": None, "tracked_markets": {}}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_alert_date": None, "tracked_markets": {}})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _search_polymarket(keyword: str) -> list:

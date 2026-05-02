@@ -24,16 +24,14 @@ DIVERGENCE_THRESHOLD = 2.0
 
 
 def _load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"last_alert_date": None, "last_selloff_alert": None,
-            "last_divergence_alert": None, "last_demand_score": None}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_alert_date": None, "last_selloff_alert": None,
+            "last_divergence_alert": None, "last_demand_score": None})
 
 
 def _save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _get_hyperscaler_data() -> dict:

@@ -23,15 +23,13 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), ".week_ahead_state.json")
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"last_preview_week": None}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"last_preview_week": None})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _get_week_catalysts() -> list:

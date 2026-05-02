@@ -24,15 +24,13 @@ AUTO_ANALYZE_KEYWORDS = {
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {"alerted": []}
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {"alerted": []})
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def check_catalysts():

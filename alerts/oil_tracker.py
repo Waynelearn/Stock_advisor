@@ -44,10 +44,8 @@ MU_OIL_BETA = -0.3  # Rough estimate: 10% oil spike -> ~3% MU drag
 
 
 def load_state() -> dict:
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {
+    from .state_utils import safe_load_state
+    return safe_load_state(STATE_FILE, {
         "last_alert_prices": {},
         "last_alert_time": None,
         "crossed_levels": [],
@@ -56,12 +54,12 @@ def load_state() -> dict:
         "session_date": None,
         "alert_count_today": 0,
         "alert_date": None,
-    }
+    })
 
 
 def save_state(state: dict):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    from .state_utils import safe_save_state
+    safe_save_state(STATE_FILE, state)
 
 
 def _get_oil_prices() -> dict:
