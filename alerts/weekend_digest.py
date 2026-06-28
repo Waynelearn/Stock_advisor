@@ -12,8 +12,9 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY
+from .config import POSITION, position_summary, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".weekend_digest_state.json")
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
@@ -95,7 +96,7 @@ def _ai_digest(headlines: list, videos: list) -> str:
     headline_text = "\n".join(f"- [{h['source']}] {h['title']}" for h in headlines[:30])
     video_text = "\n".join(f"- [{v['channel']}] {v['title']}" for v in videos[:10])
 
-    prompt = f"""Create a concise weekend news digest for a Micron (MU) investor holding 500x MU 380/400 bull call spread expiring March 20, 2026.
+    prompt = f"""Create a concise weekend news digest for a Micron (MU) investor holding {position_summary()}.
 
 Weekend Headlines:
 {headline_text}
@@ -112,22 +113,8 @@ Summarize in this format:
 
 Keep total response under 300 words. Be direct and actionable."""
 
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 500,
-                "temperature": 0.3,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "AI digest unavailable — review headlines below"
+    return ask(prompt, tier="reasoning", temperature=0.3, max_tokens=2000,
+               label="weekend_digest", fallback="AI digest unavailable — review headlines below")
 
 
 def send_weekend_digest():

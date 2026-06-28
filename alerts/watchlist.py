@@ -2,7 +2,8 @@
 
 import yfinance as yf
 import requests
-from .config import DEEPSEEK_API_KEY, PEERS
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, PEERS, position_summary
+from .llm import ask
 from .bot import send_alert
 
 
@@ -80,24 +81,14 @@ def analyze_and_alert():
     prompt = (
         f"You are a semiconductor options setup scanner.\n\n"
         f"SCANNED RESULTS:\n{setup_text}\n"
-        f"The trader just finished a MU 380/400 bull call spread. "
+        f"The trader currently holds {position_summary()}. "
         f"They like high-conviction vertical spreads on semis with upcoming catalysts.\n\n"
         f"In 3-4 sentences: Which ticker has the best setup for the NEXT vertical spread trade? "
         f"What strikes and expiry would you suggest? What's the catalyst?"
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 200},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        analysis = "Setup analysis unavailable."
+    analysis = ask(prompt, tier="fast", temperature=0.3, max_tokens=3000,
+                   label="watchlist", fallback="Setup analysis unavailable.")
 
     # Format message
     lines = [

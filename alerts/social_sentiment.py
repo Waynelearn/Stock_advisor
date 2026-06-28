@@ -6,8 +6,9 @@ import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_ET
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, TZ_ET
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".social_state.json")
 
@@ -167,22 +168,12 @@ def _analyze_social_sentiment(stocktwits: dict, reddit: dict) -> str:
     prompt = (
         f"Social sentiment snapshot for Micron Technology (MU):\n\n"
         f"{st_info}\n\n{reddit_info}\n\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 2-3 sentences: summarize the social sentiment. Is this a contrarian signal? "
         f"Is retail overly bullish/bearish? What's the dominant narrative?"
     )
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 150},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="social_sentiment", fallback="Analysis unavailable.")
 
 
 def check_social_sentiment():

@@ -4,7 +4,8 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_ET, TZ_SGT, CATALYSTS, PEERS, FUTURES
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, POSITION, position_summary, TZ_ET, TZ_SGT, CATALYSTS, PEERS, FUTURES
+from .llm import ask
 from .bot import send_alert
 from .daily_briefing import get_daily_data, estimate_spread_value
 from .news_scanner import get_recent_headlines
@@ -130,7 +131,7 @@ def _deepseek_war_room(mu_price, spread_val, pnl, trading_days, vix,
         f"You are running a WEEKEND WAR ROOM with 9 expert personas for a short-term options trader.\n\n"
         f"PERSONAS: Rex(Bull), Vera(Bear), Sigma(Quant), Atlas(Macro), Chart(Tech), "
         f"Flux(Market Regime), Edge(Flow/Sentiment), Catalyst(Events), Arbiter(Judge)\n\n"
-        f"POSITION: 500x MU 380/400 bull call spread, entry $11.897, expiry March 20, 2026.\n"
+        f"POSITION: {position_summary()}.\n"
         f"Current: MU ${mu_price:.2f}, Spread ${spread_val:.2f}, P&L ${pnl:+,.0f}, "
         f"{trading_days} trading days left, VIX {vix:.1f}\n\n"
         f"PEERS:\n{peers_str}\n"
@@ -143,18 +144,8 @@ def _deepseek_war_room(mu_price, spread_val, pnl, trading_days, vix,
         f"4. GAME PLAN: 2-3 specific if/then scenarios for next week\n"
         f"Be concrete with numbers and levels."
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 400},
-            timeout=25,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"War room analysis unavailable: {e}"
+    return ask(prompt, tier="reasoning", temperature=0.3, max_tokens=2000,
+               label="weekend_warroom", fallback="War room analysis unavailable.")
 
 
 def send_war_room():

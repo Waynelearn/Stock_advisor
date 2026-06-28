@@ -6,7 +6,11 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT
+from .config import (
+    POSITION, TZ_ET, TZ_SGT,
+    SECTOR_DEFENSIVE_BIAS_PCT, SECTOR_GROWTH_LEAD_PCT,
+    SECTOR_GROWTH_VS_DEFENSIVE_PCT, SECTOR_SOXX_OUTPERFORM_PCT,
+)
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".sector_rotation_state.json")
@@ -103,11 +107,11 @@ def _detect_pattern(returns: dict) -> tuple:
     growth_avg = growth_avg / g_count if g_count > 0 else 0
 
     # Risk-off: defensives up, growth down
-    if defensive_avg > 0 and growth_avg < 0 and (defensive_avg - growth_avg) > 2.0:
+    if defensive_avg > 0 and growth_avg < 0 and (defensive_avg - growth_avg) > SECTOR_DEFENSIVE_BIAS_PCT:
         return "RISK_OFF", "Defensive sectors outperforming while growth/semis underperform"
 
     # Risk-on: growth up, defensives flat/down
-    if growth_avg > 1.0 and growth_avg > defensive_avg + 1.5:
+    if growth_avg > SECTOR_GROWTH_LEAD_PCT and growth_avg > defensive_avg + SECTOR_GROWTH_VS_DEFENSIVE_PCT:
         return "RISK_ON", "Growth and semis leading the market — risk-on environment"
 
     # Rotation out of semis: tech up but semis down
@@ -115,7 +119,7 @@ def _detect_pattern(returns: dict) -> tuple:
         return "ROTATION_OUT_SEMIS", "Tech rising but semis lagging — money rotating within tech away from semis"
 
     # Rotation into semis: semis outperforming tech
-    if soxx_vs_xlk_5d > 2.0:
+    if soxx_vs_xlk_5d > SECTOR_SOXX_OUTPERFORM_PCT:
         return "ROTATION_INTO_SEMIS", "Semis outperforming broader tech — sector-specific catalyst driving inflows"
 
     # SOXX significant underperformance vs SPY

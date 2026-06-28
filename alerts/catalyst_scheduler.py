@@ -13,12 +13,22 @@ from .bot import send_catalyst_reminder
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".catalyst_state.json")
 
-# Event types that trigger auto-scrape + analysis
+# Event types that trigger auto-scrape + analysis.
+# Order matters — first match wins, so peer-earnings keys must precede the
+# generic "EARNINGS" trigger so e.g. "NVDA EARNINGS" doesn't fall through to MU.
 AUTO_ANALYZE_KEYWORDS = {
     "CPI": "CPI",
+    "PPI": "PPI",
+    "PCE": "PCE",
     "NFP": "NFP",
     "FOMC RATE DECISION": "FOMC",
     "POWELL PRESS CONFERENCE": "FOMC",
+    "NVDA EARNINGS": "PEER_NVDA",
+    "AMD EARNINGS": "PEER_AMD",
+    "AVGO EARNINGS": "PEER_AVGO",
+    "MRVL EARNINGS": "PEER_MRVL",
+    "TSM EARNINGS": "PEER_TSM",
+    "INTC EARNINGS": "PEER_INTC",
     "MU EARNINGS": "EARNINGS",
 }
 
@@ -93,6 +103,10 @@ def _auto_analyze_event(description: str):
         elif event_type == "EARNINGS":
             from .economic_data import analyze_mu_earnings
             analyze_mu_earnings()
+        elif event_type.startswith("PEER_"):
+            from .economic_data import analyze_peer_earnings
+            ticker = event_type.split("_", 1)[1]
+            analyze_peer_earnings(ticker)
         else:
             from .economic_data import fetch_latest_economic_data, analyze_economic_release
             scraped = fetch_latest_economic_data(event_type)

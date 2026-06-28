@@ -11,7 +11,8 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY
+from .config import POSITION, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".weekend_social_state.json")
@@ -154,22 +155,8 @@ Provide:
 
 Keep total under 150 words."""
 
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 250,
-                "temperature": 0.3,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "AI analysis unavailable"
+    return ask(prompt, tier="fast", temperature=0.3, max_tokens=3000,
+               label="weekend_social", fallback="AI analysis unavailable")
 
 
 def check_weekend_social():

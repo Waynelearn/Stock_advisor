@@ -1,7 +1,8 @@
 """Smart Level Alerts - DeepSeek analyzes WHY a level was crossed."""
 
 import requests
-from .config import DEEPSEEK_API_KEY, POSITION, PEERS, FUTURES
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, PEERS, FUTURES
+from .llm import ask
 
 
 def analyze_level_cross(ticker: str, price: float, level: float, direction: str) -> str:
@@ -35,20 +36,10 @@ def analyze_level_cross(ticker: str, price: float, level: float, direction: str)
     prompt = (
         f"You are a real-time semiconductor trading analyst. MU just hit a key price level.\n\n"
         f"Context: {context}\n\n"
-        f"POSITION: 500x MU 380/400 bull call spread, expiry March 20.\n\n"
+        f"POSITION: {position_summary()}.\n\n"
         f"In 2-3 sentences: WHY is MU moving (sector-wide? MU-specific? macro?), "
         f"is this move likely to continue or reverse, and should the trader act? Be direct."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 150},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="smart_alerts", fallback="Analysis unavailable.")

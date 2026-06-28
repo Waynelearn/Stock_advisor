@@ -11,8 +11,12 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, TZ_ET, TZ_SGT
+from .config import (
+    DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, POSITION, position_summary,
+    TZ_ET, TZ_SGT, get_commodity_levels,
+)
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".macro_state.json")
 
@@ -62,17 +66,30 @@ YF_TICKERS = {
     "NLR": "VanEck Uranium+Nuclear",
 }
 
-# Thresholds that trigger alerts (crossed in either direction)
-ALERT_THRESHOLDS = {
+# Static regime thresholds — these encode well-known cutoffs (VIX 20/30/40
+# fear regimes; Fear & Greed quintiles; yield 4%/5% headlines). CL=F and GC=F
+# are computed dynamically from spot via get_alert_thresholds() below.
+STATIC_ALERT_THRESHOLDS = {
     "^VIX": [20, 25, 30, 35, 40],
     "^SKEW": [130, 140, 150, 160],
     "^MOVE": [100, 120, 140],
     "DX-Y.NYB": [95, 100, 105, 110],
-    "CL=F": [80, 85, 90, 95, 100, 105, 110, 115, 120, 130],
-    "GC=F": [2500, 3000, 4000, 5000],
     "^TNX": [3.5, 4.0, 4.5, 5.0],
     "fear_greed": [20, 25, 40, 60, 75, 80],
 }
+
+
+def get_alert_thresholds(indicators: dict) -> dict:
+    """Threshold dict combining static regime levels with dynamic commodity
+    ladders generated from the latest spot for oil and gold."""
+    thresholds = dict(STATIC_ALERT_THRESHOLDS)
+    cl = (indicators.get("CL=F") or {}).get("value")
+    gc = (indicators.get("GC=F") or {}).get("value")
+    if cl:
+        thresholds["CL=F"] = get_commodity_levels(cl)
+    if gc:
+        thresholds["GC=F"] = get_commodity_levels(gc)
+    return thresholds
 
 # Labels for Fear & Greed
 FG_LABELS = {
@@ -254,7 +271,7 @@ def check_macro_alerts():
 
     indicators = fetch_all_indicators()
 
-    for ticker, levels in ALERT_THRESHOLDS.items():
+    for ticker, levels in get_alert_thresholds(indicators).items():
         data = indicators.get(ticker)
         if not data:
             continue
@@ -417,7 +434,7 @@ def _send_ai_interpretation(indicators: dict):
     context = "\n".join(context_parts)
 
     prompt = (
-        f"You are a macro strategist advising a trader holding 500x MU 380/400 bull call spread "
+        f"You are a macro strategist advising a trader holding {position_summary()} "
         f"expiring March 20, 2026.\n\n"
         f"Today's macro indicators:\n{context}\n\n"
         f"In 100 words max, answer:\n"
@@ -428,19 +445,8 @@ def _send_ai_interpretation(indicators: dict):
     )
 
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 200,
-            },
-            timeout=25,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
+        analysis = ask(prompt, tier="reasoning", temperature=0.3, max_tokens=2000,
+                       label="macro_dashboard", fallback="(interpretation unavailable)")
 
         msg = (
             f"\U0001f9e0 <b>MACRO INTERPRETATION</b>\n"

@@ -9,9 +9,12 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.venv/
+venv/
 
 # State files (contain runtime data, not code)
 alerts/.*_state.json
+alerts/.llm_trace.jsonl*
 alerts/.message_log.json
 alerts/.interaction_log.json
 alerts/.poll_offset.json
@@ -36,3 +39,5 @@ alerts/cron.log
 # OS
 .DS_Store
 Thumbs.db
+alerts/.deepseek_pricing.json
+alerts/.pricing_updater_state.json

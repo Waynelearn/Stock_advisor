@@ -6,7 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
-from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, STATE_RETENTION, TRUNCATION
 
 MESSAGE_LOG_FILE = os.path.join(os.path.dirname(__file__), ".message_log.json")
 
@@ -25,11 +25,10 @@ def _log_message(message: str, msg_type: str = "text", success: bool = True):
         "timestamp": datetime.now(ZoneInfo("Asia/Singapore")).isoformat(),
         "type": msg_type,
         "success": success,
-        "message": message[:500],  # Truncate for log storage
+        "message": message[:TRUNCATION["log_message"]],
     })
 
-    # Keep last 200 messages
-    log = log[-200:]
+    log = log[-STATE_RETENTION["msg_log"]:]
     try:
         with open(MESSAGE_LOG_FILE, "w") as f:
             json.dump(log, f, indent=2)
@@ -51,10 +50,20 @@ def get_message_log(limit: int = 20) -> list[dict]:
 
 def send_alert(message: str, parse_mode: str = "HTML", image_url: str = None) -> bool:
     """Send a message to Telegram. If image_url provided, sends as photo with caption."""
+    # Append API usage footer if any DeepSeek calls happened since the last alert
+    try:
+        from .deepseek_client import consume_pending_usage, format_usage_footer
+        totals = consume_pending_usage()
+        if totals:
+            footer = format_usage_footer(totals)
+            message = f"{message}\n\n<i>{footer}</i>"
+    except Exception:
+        pass
+
     if image_url:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         # Telegram captions have 1024 char limit
-        caption = message[:1024] if len(message) > 1024 else message
+        caption = message[:TRUNCATION["telegram_caption"]] if len(message) > TRUNCATION["telegram_caption"] else message
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "photo": image_url,
@@ -73,7 +82,7 @@ def send_alert(message: str, parse_mode: str = "HTML", image_url: str = None) ->
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
 
     # Split long messages to respect Telegram's 4096-char limit
-    MAX_LEN = 4096
+    MAX_LEN = TRUNCATION["telegram_msg"]
     chunks = []
     if len(message) <= MAX_LEN:
         chunks = [message]

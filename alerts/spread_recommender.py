@@ -15,8 +15,12 @@ import requests
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_ET, TZ_SGT, CATALYSTS
+from .config import (
+    DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, POSITION, TZ_ET, TZ_SGT, CATALYSTS,
+    SPREAD_REC,
+)
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".spread_rec_state.json")
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
@@ -121,6 +125,16 @@ def _scan_spreads(ticker: str, expiry: str, current_price: float) -> list[dict]:
             if avg_iv <= 0:
                 continue
 
+            # Quality filters — drop spreads that are uneconomic to trade.
+            min_profit = max(
+                SPREAD_REC["min_max_profit_dollars"],
+                SPREAD_REC["min_max_profit_ratio"] * width,
+            )
+            if max_profit < min_profit:
+                continue
+            if risk_reward < SPREAD_REC["min_risk_reward"]:
+                continue
+
             # Probability of max profit (finish above short strike)
             prob_max = _black_scholes_prob(current_price, short_strike, T, avg_iv)
 
@@ -137,12 +151,15 @@ def _scan_spreads(ticker: str, expiry: str, current_price: float) -> list[dict]:
                 q = 1 - p
                 kelly = max(0, (risk_reward * p - q) / risk_reward)
 
-            # Composite score: weight EV, prob, and R:R
+            # Composite score combines: prob, R:R, EV, AND Kelly (so Kelly-positive
+            # setups dominate the leaderboard, not high-prob low-edge spreads).
+            kelly_normalizer = SPREAD_REC["kelly_full_credit_pct"] / 100.0
             score = (
-                0.35 * min(prob_max, 1.0) +         # Prob of max profit
-                0.25 * min(prob_profit, 1.0) +       # Prob of any profit
-                0.20 * min(risk_reward / 3, 1.0) +   # R:R (capped at 3:1)
-                0.20 * max(0, min(ev / net_debit, 1.0))  # EV/cost ratio
+                SPREAD_REC["score_weight_prob_max"]    * min(prob_max, 1.0)
+                + SPREAD_REC["score_weight_prob_profit"] * min(prob_profit, 1.0)
+                + SPREAD_REC["score_weight_risk_reward"] * min(risk_reward / SPREAD_REC["rr_full_credit"], 1.0)
+                + SPREAD_REC["score_weight_ev"]          * max(0, min(ev / net_debit, 1.0))
+                + SPREAD_REC["score_weight_kelly"]       * min(kelly / kelly_normalizer, 1.0)
             )
 
             spreads.append({
@@ -168,13 +185,46 @@ def _scan_spreads(ticker: str, expiry: str, current_price: float) -> list[dict]:
     return spreads
 
 
-def _get_position_size_pct(kelly_pct: float, confidence: str = "medium") -> float:
-    """Convert Kelly % to recommended position size with safety margin.
+def _get_position_size_pct(spread: dict, base_risk_pct: float | None = None) -> float:
+    """Recommended portfolio % to allocate to a spread's net debit.
 
-    Uses fractional Kelly (half-Kelly for medium, quarter for low).
+    All thresholds, multipliers, and caps live in `SPREAD_REC` in config.py
+    so this function has no in-line magic numbers.
     """
-    multiplier = {"high": 0.5, "medium": 0.25, "low": 0.125}.get(confidence, 0.25)
-    return round(min(kelly_pct * multiplier, 25.0), 1)  # Cap at 25%
+    if base_risk_pct is None:
+        base_risk_pct = SPREAD_REC["base_risk_pct"]
+
+    if not isinstance(spread, dict):
+        # Legacy: caller passed a kelly_pct number directly. Apply same
+        # config-driven baseline so behaviour stays consistent.
+        kelly_pct = float(spread or 0)
+        legacy_size = max(
+            SPREAD_REC["size_floor_pct"],
+            kelly_pct * SPREAD_REC["size_mult_low"] / SPREAD_REC["kelly_bump_normalizer"],
+        )
+        return round(min(legacy_size, SPREAD_REC["size_cap_pct"]), 1)
+
+    score = float(spread.get("score") or 0)
+    kelly_pct = float(spread.get("kelly_pct") or 0)
+
+    if score >= SPREAD_REC["score_threshold_high"]:
+        score_mult = SPREAD_REC["size_mult_high"]
+    elif score >= SPREAD_REC["score_threshold_mid"]:
+        score_mult = SPREAD_REC["size_mult_mid"]
+    elif score >= SPREAD_REC["score_threshold_low"]:
+        score_mult = SPREAD_REC["size_mult_low"]
+    else:
+        score_mult = SPREAD_REC["size_mult_below_low"]
+
+    kelly_mult = 1.0 + min(
+        kelly_pct / SPREAD_REC["kelly_bump_full_pct"],
+        SPREAD_REC["kelly_bump_max_multiplier"],
+    )
+
+    size = base_risk_pct * score_mult * (kelly_mult / SPREAD_REC["kelly_bump_normalizer"])
+    if score >= SPREAD_REC["score_threshold_low"] and size < SPREAD_REC["size_floor_pct"]:
+        size = SPREAD_REC["size_floor_pct"]
+    return round(min(size, SPREAD_REC["size_cap_pct"]), 1)
 
 
 def recommend_spreads(ticker: str = "MU", num_expiries: int = 3) -> list[dict]:
@@ -256,8 +306,8 @@ def send_spread_recommendations():
         ]
 
         for i, s in enumerate(top, 1):
-            # Position sizing
-            size_pct = _get_position_size_pct(s["kelly_pct"])
+            # Position sizing (uses score + Kelly, not Kelly alone)
+            size_pct = _get_position_size_pct(s)
             cats_before = _get_catalysts_before_expiry(s["expiry"])
             cat_count = len(cats_before)
             key_events = [c["desc"] for c in cats_before if any(kw in c["desc"].upper() for kw in ["FOMC", "EARNINGS", "CPI", "NFP", "GTC"])]
@@ -277,8 +327,8 @@ def send_spread_recommendations():
                 f"P(max): <b>{s['prob_max']:.0f}%</b> | P(profit): {s['prob_profit']:.0f}%"
             )
             lines.append(
-                f"   IV: {s['avg_iv']:.0f}% | Kelly: {s['kelly_pct']:.0f}% | "
-                f"Size: <b>{size_pct:.0f}%</b> of portfolio"
+                f"   IV: {s['avg_iv']:.0f}% | Kelly: {s['kelly_pct']:.1f}% | "
+                f"Size: <b>{size_pct:.1f}%</b> of portfolio"
             )
             if key_events:
                 lines.append(f"   \u26a1 {', '.join(key_events[:2])}")
@@ -325,18 +375,8 @@ def _analyze_recommendations(spreads: list[dict], price: float, catalysts: list[
         f"Should the trader wait for a specific event, or enter now? "
         f"Consider IV levels, event risk, and timing."
     )
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 200},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="reasoning", temperature=0.3, max_tokens=1500,
+               label="spread_recommender", fallback="Analysis unavailable.")
 
 
 if __name__ == "__main__":

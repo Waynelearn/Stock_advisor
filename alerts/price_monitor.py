@@ -7,7 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .config import (
-    POSITION, PRICE_LEVELS, BIG_MOVE_PCT, VIX_LEVELS, TZ_ET, TZ_SGT,
+    POSITION, get_price_levels, BIG_MOVE_PCT, VIX_LEVELS, TZ_ET, TZ_SGT,
     MARKET_OPEN_HOUR, MARKET_OPEN_MIN, MARKET_CLOSE_HOUR, MARKET_CLOSE_MIN,
     PREMARKET_HOUR, AFTERHOURS_END_HOUR,
     FUTURES, FUTURES_BIG_MOVE_PCT, PEERS, PEER_BIG_MOVE_PCT,
@@ -257,10 +257,10 @@ def check_prices():
         save_state(state)
         return
 
-    # Check price level crossings
+    # Check price level crossings (levels regenerated daily around spot)
     last_price = state["last_mu_price"]
     if last_price is not None:
-        for level in PRICE_LEVELS:
+        for level in get_price_levels(mu_price):
             level_key = str(level)
             if level_key in state["alerted_price_levels"]:
                 continue

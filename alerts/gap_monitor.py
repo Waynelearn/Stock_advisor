@@ -11,20 +11,18 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT, FUTURES
+from .config import (
+    POSITION, TZ_ET, TZ_SGT, FUTURES,
+    GAP_FUTURES_PCT as FUTURES_GAP_PCT,
+    GAP_SEMI_PCT as SEMI_GAP_PCT,
+    GAP_CONSENSUS_PCT as CONSENSUS_GAP_PCT,
+    GAP_PREMARKET_PCT as MU_PREMARKET_PCT,
+    GAP_SEMI_LARGE_PCT, GAP_SEMI_MEDIUM_PCT, GAP_AVG_SMALL_PCT,
+    MU_BETA_NQ, MU_BETA_SOX,
+)
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".gap_monitor_state.json")
-
-# Gap thresholds
-FUTURES_GAP_PCT = 0.5       # Alert if any single future gaps >0.5%
-SEMI_GAP_PCT = 0.75         # Alert if SOX/SOXX gaps >0.75%
-CONSENSUS_GAP_PCT = 0.3     # Alert if ALL futures gap same direction >0.3%
-MU_PREMARKET_PCT = 1.0      # Alert if MU pre-market move >1%
-
-# MU beta estimates (used to project MU open from futures)
-MU_BETA_NQ = 1.4            # MU beta to Nasdaq futures
-MU_BETA_SOX = 0.9           # MU beta to SOX index
 
 # Semi proxy ticker (SOXX ETF is more reliably available than ^SOX)
 SEMI_TICKER = "SOXX"
@@ -180,16 +178,16 @@ def _determine_sentiment(gaps: dict[str, float], semi_gap: float | None) -> str:
     # Add semi weight to sentiment
     semi_bias = ""
     if semi_gap is not None:
-        if abs(semi_gap) > 1.0:
+        if abs(semi_gap) > GAP_SEMI_LARGE_PCT:
             semi_bias = ", semis leading" if semi_gap > 0 else ", semis lagging"
-        elif abs(semi_gap) > 0.5:
+        elif abs(semi_gap) > GAP_SEMI_MEDIUM_PCT:
             semi_bias = ", semis firm" if semi_gap > 0 else ", semis soft"
 
     if all_positive and avg_gap >= 0.5:
         return f"Bullish gap-up{semi_bias}"
     elif all_negative and avg_gap <= -0.5:
         return f"Bearish gap-down{semi_bias}"
-    elif abs(avg_gap) < 0.2:
+    elif abs(avg_gap) < GAP_AVG_SMALL_PCT:
         return f"Flat open expected{semi_bias}"
     else:
         return f"Mixed signals{semi_bias}"

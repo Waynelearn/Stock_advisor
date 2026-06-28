@@ -100,6 +100,7 @@ from alerts.oil_tracker import check_oil_prices
 from alerts.memory_pricing import check_memory_pricing
 from alerts.hyperscaler_tracker import check_hyperscaler_signals
 from alerts.supply_chain import check_supply_chain
+from alerts.pricing_updater import daily_pricing_check
 
 BRIEFING_STATE_FILE = os.path.join(os.path.dirname(__file__), ".briefing_state.json")
 
@@ -568,6 +569,16 @@ def main():
     if expiry_mode and now_sgt.hour == 20 and now_sgt.minute == 0:
         dte = days_to_expiry()
         print(f"[EXPIRY MODE] {dte} days to expiry - escalated monitoring active")
+
+    # --- DEEPSEEK PRICING REFRESH ---
+    # Once daily at 1 AM SGT — scrapes the live pricing page, updates
+    # .deepseek_pricing.json, and alerts on material rate changes (>5%).
+    # Auto-handles the v4-pro 75% discount expiring 2026-05-31.
+    if now_sgt.hour == 1 and now_sgt.minute == 0:
+        try:
+            daily_pricing_check()
+        except Exception as e:
+            print(f"[PRICING UPDATER ERROR] {e}")
 
 
 if __name__ == "__main__":

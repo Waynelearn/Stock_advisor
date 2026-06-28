@@ -4,8 +4,9 @@ import json
 import os
 import yfinance as yf
 import requests
-from .config import DEEPSEEK_API_KEY, POSITION, PEERS
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, PEERS, STATE_RETENTION
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".analyst_state.json")
 TICKERS = [POSITION["ticker"]] + [p for p in PEERS if p != "SOXX"]
@@ -61,7 +62,7 @@ def check_analyst_changes():
             continue
 
     # Keep state manageable
-    if len(state["seen"]) > 200:
+    if len(state["seen"]) > STATE_RETENTION["analyst_seen"]:
         keys = list(state["seen"].keys())
         state["seen"] = {k: True for k in keys[-100:]}
 
@@ -106,18 +107,8 @@ def _analyze_rating(rating: dict) -> str:
     prompt = (
         f"{rating['firm']} just {rating['action']} {rating['ticker']} "
         f"from {rating['prev_grade']} to {rating['grade']}.\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 1-2 sentences: what does this mean for MU? Is this firm influential?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return ""
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="analyst_tracker", fallback="")

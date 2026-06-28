@@ -25,7 +25,8 @@ from zoneinfo import ZoneInfo
 import requests
 import yfinance as yf
 
-from .config import DEEPSEEK_API_KEY, TZ_ET, POSITION, PEERS
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, TZ_ET, POSITION, PEERS
+from .llm import ask
 
 CACHE_FILE = os.path.join(os.path.dirname(__file__), ".catalyst_cache.json")
 CACHE_MAX_AGE_DAYS = 7
@@ -115,27 +116,14 @@ def _get_relevance_tag(event_name: str) -> str:
 
 def _deepseek_extract(prompt: str, max_tokens: int = 3000) -> str | None:
     """Call DeepSeek to extract structured data from text. Returns raw content."""
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": max_tokens,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"].strip()
-        # Clean markdown fences if present
-        content = re.sub(r'^```(?:json)?\s*', '', content)
-        content = re.sub(r'\s*```$', '', content)
-        return content
-    except Exception as e:
-        print(f"[CATALYST FETCH] DeepSeek call failed: {e}")
+    content = ask(prompt, tier="fast", temperature=0.1, max_tokens=max_tokens,
+                  label="catalyst_extract")
+    if not content:
         return None
+    # Clean markdown fences if present
+    content = re.sub(r'^```(?:json)?\s*', '', content)
+    content = re.sub(r'\s*```$', '', content)
+    return content
 
 
 def _html_to_text(html: str) -> str:

@@ -3,7 +3,8 @@
 import requests
 from bs4 import BeautifulSoup
 
-from .config import DEEPSEEK_API_KEY
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST
+from .llm import ask
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
@@ -87,22 +88,8 @@ def summarize_article(title: str, text: str | None) -> dict:
     )
 
     try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 200,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        result_text = resp.json()["choices"][0]["message"]["content"].strip()
+        result_text = ask(prompt, tier="fast", temperature=0.1, max_tokens=3000,
+                          label="summarizer.article")
 
         # Parse JSON from response
         import json
@@ -163,22 +150,8 @@ def batch_sentiment(headlines: list[dict]) -> list[dict]:
     )
 
     try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 500,
-            },
-            timeout=20,
-        )
-        resp.raise_for_status()
-        result_text = resp.json()["choices"][0]["message"]["content"].strip()
+        result_text = ask(prompt, tier="fast", temperature=0.1, max_tokens=3000,
+                          label="summarizer.batch")
 
         import json
         if result_text.startswith("```"):

@@ -12,8 +12,9 @@ import os
 import re
 import requests
 from bs4 import BeautifulSoup
-from .config import DEEPSEEK_API_KEY, POSITION
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, TRUNCATION
 from .bot import send_alert
+from .llm import ask
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -39,12 +40,12 @@ def fetch_cpi_report() -> str | None:
         # CPI reports are in <pre> tags on BLS
         pre = soup.find("pre")
         if pre:
-            return pre.get_text()[:4000]
+            return pre.get_text()[:TRUNCATION["scrape_max"]]
 
         # Fallback: grab all paragraphs
         paras = soup.find_all("p")
         text = "\n".join(p.get_text(strip=True) for p in paras if len(p.get_text(strip=True)) > 30)
-        return text[:4000] if text else None
+        return text[:TRUNCATION["scrape_max"]] if text else None
     except Exception as e:
         print(f"[CPI SCRAPE ERROR] {e}")
         return None
@@ -62,13 +63,73 @@ def fetch_nfp_report() -> str | None:
 
         pre = soup.find("pre")
         if pre:
-            return pre.get_text()[:4000]
+            return pre.get_text()[:TRUNCATION["scrape_max"]]
 
         paras = soup.find_all("p")
         text = "\n".join(p.get_text(strip=True) for p in paras if len(p.get_text(strip=True)) > 30)
-        return text[:4000] if text else None
+        return text[:TRUNCATION["scrape_max"]] if text else None
     except Exception as e:
         print(f"[NFP SCRAPE ERROR] {e}")
+        return None
+
+
+def fetch_ppi_report() -> str | None:
+    """Scrape the latest PPI press release from BLS."""
+    try:
+        resp = requests.get(
+            "https://www.bls.gov/news.release/ppi.nr0.htm",
+            headers=HEADERS, timeout=15,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        pre = soup.find("pre")
+        if pre:
+            return pre.get_text()[:TRUNCATION["scrape_max"]]
+
+        paras = soup.find_all("p")
+        text = "\n".join(p.get_text(strip=True) for p in paras if len(p.get_text(strip=True)) > 30)
+        return text[:TRUNCATION["scrape_max"]] if text else None
+    except Exception as e:
+        print(f"[PPI SCRAPE ERROR] {e}")
+        return None
+
+
+def fetch_pce_report() -> str | None:
+    """Scrape the latest Personal Income & Outlays (PCE) release from BEA.
+
+    BEA URLs vary by month, so we discover the latest release via the news index.
+    """
+    try:
+        idx = requests.get(
+            "https://www.bea.gov/news/current-releases",
+            headers=HEADERS, timeout=15,
+        )
+        idx.raise_for_status()
+        soup = BeautifulSoup(idx.text, "html.parser")
+
+        release_url = None
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "personal-income-and-outlays" in href.lower():
+                release_url = href if href.startswith("http") else "https://www.bea.gov" + href
+                break
+        if not release_url:
+            return None
+
+        resp = requests.get(release_url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["nav", "header", "footer", "script", "style", "aside"]):
+            tag.decompose()
+        paras = soup.find_all("p")
+        text = "\n".join(
+            p.get_text(strip=True) for p in paras
+            if len(p.get_text(strip=True)) > 30
+        )
+        return text[:TRUNCATION["scrape_max"]] if text else None
+    except Exception as e:
+        print(f"[PCE SCRAPE ERROR] {e}")
         return None
 
 
@@ -109,7 +170,7 @@ def fetch_fomc_statement() -> tuple[str | None, str | None]:
         if latest:
             try:
                 with open(FOMC_STATE_FILE, "w") as f:
-                    json.dump({"latest_url": statement_urls[0][1], "latest_text": latest[:2000]}, f)
+                    json.dump({"latest_url": statement_urls[0][1], "latest_text": latest[:int(TRUNCATION["scrape_max"] * 0.5)]}, f)
             except Exception:
                 pass
 
@@ -144,7 +205,7 @@ def _scrape_fomc_page(url: str) -> str | None:
             and "official website" not in p.get_text().lower()
             and ".gov" not in p.get_text()[:30].lower()
         )
-        return text[:3000] if text else None
+        return text[:int(TRUNCATION["scrape_max"] * 0.75)] if text else None
     except Exception:
         return None
 
@@ -228,6 +289,10 @@ def fetch_latest_economic_data(event_type: str) -> str | None:
     """Dispatch to the right scraper based on event type."""
     if event_type == "CPI":
         return fetch_cpi_report()
+    elif event_type == "PPI":
+        return fetch_ppi_report()
+    elif event_type == "PCE":
+        return fetch_pce_report()
     elif event_type == "NFP":
         return fetch_nfp_report()
     elif event_type == "FOMC":
@@ -238,6 +303,82 @@ def fetch_latest_economic_data(event_type: str) -> str | None:
     return None
 
 
+def analyze_peer_earnings(ticker: str):
+    """Analyze a peer's just-released earnings for MU sympathy implications.
+
+    Uses yfinance for the post-close move + live rolling correlation to estimate
+    sympathy size. Then hands the context to DeepSeek for interpretation.
+    """
+    import yfinance as yf
+    from .config import PEER_CORRELATIONS
+
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        price = (
+            info.get("postMarketPrice")
+            or info.get("regularMarketPrice")
+            or info.get("currentPrice")
+        )
+        prev = (
+            info.get("regularMarketPreviousClose")
+            or info.get("previousClose")
+        )
+        if not price or not prev:
+            send_alert(
+                f"⚠️ <b>{ticker} EARNINGS</b>\n"
+                f"Could not fetch post-close price for sympathy analysis. "
+                f"Check Yahoo Finance manually."
+            )
+            return
+
+        price = float(price)
+        prev = float(prev)
+        move_pct = (price - prev) / prev * 100
+        corr = PEER_CORRELATIONS.get(ticker, 0.5)
+        est_mu_move = move_pct * corr
+
+        prompt = (
+            f"{ticker} just reported earnings (post-close).\n"
+            f"  Price: ${price:.2f} (prev close ${prev:.2f}, move {move_pct:+.2f}%)\n"
+            f"  Rolling 60d correlation to {POSITION['ticker']}: {corr:.2f}\n"
+            f"  Implied {POSITION['ticker']} sympathy move: {est_mu_move:+.2f}%\n\n"
+            f"My position: {position_summary()}.\n\n"
+            f"In 5-7 sentences for a Telegram alert:\n"
+            f"1. Was this likely BEAT / MISS / INLINE based on the price reaction?\n"
+            f"2. What did {ticker} most likely guide that's relevant to MU "
+            f"(DRAM/HBM/AI capex/data center demand)?\n"
+            f"3. Probable {POSITION['ticker']} sympathy direction and SIZE for next session "
+            f"(don't just multiply by correlation — adjust for asymmetry, sector context).\n"
+            f"4. Specific action for the {POSITION['long_strike']}/{POSITION['short_strike']} "
+            f"spread (HOLD/REDUCE/SELL + trigger)."
+        )
+
+        analysis = ask(prompt, tier="fast", temperature=0.3, max_tokens=3000,
+                       label="economic.peer_earnings", fallback="(no analysis)")
+
+        sentiment_emoji = "\U0001f4b9" if move_pct > 0 else "\U0001f4c9"
+        msg = (
+            f"\U0001f4bc <b>{ticker} EARNINGS — Sympathy Analysis</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{sentiment_emoji} <b>{ticker}:</b> ${price:.2f} ({move_pct:+.2f}%) vs prev ${prev:.2f}\n"
+            f"<b>Corr to {POSITION['ticker']}:</b> {corr:+.2f} (rolling 60d)\n"
+            f"<b>Implied {POSITION['ticker']} sympathy:</b> {est_mu_move:+.2f}%\n\n"
+            f"{analysis}\n\n"
+            f"<code>#PEER_EARNINGS #{ticker}</code>"
+        )
+        send_alert(msg)
+    except Exception as e:
+        print(f"[PEER EARNINGS ANALYZE ERROR] {ticker}: {e}")
+        try:
+            send_alert(
+                f"⚠️ <b>{ticker} EARNINGS analysis failed</b>\n{e}\n"
+                f"Check Yahoo Finance and react manually."
+            )
+        except Exception:
+            pass
+
+
 # ============================================================================
 # DeepSeek Analysis
 # ============================================================================
@@ -246,7 +387,7 @@ def _roundtable_implications(event_type: str, initial_analysis: str, raw_data: s
     """Follow-up roundtable: 9 personas debate implications of a report."""
     prompt = (
         f"You are 9 expert personas debating the implications of a just-released {event_type} report "
-        f"for a trader holding 500x MU 380/400 bull call spread, expiry March 20, 2026.\n\n"
+        f"for a trader holding {position_summary()}.\n\n"
         f"INITIAL ANALYSIS:\n{initial_analysis[:1500]}\n\n"
         f"RAW DATA:\n{raw_data[:1000]}\n\n"
         f"PERSONAS (each gives 1-2 sentences):\n"
@@ -262,18 +403,8 @@ def _roundtable_implications(event_type: str, initial_analysis: str, raw_data: s
         f"Keep under 250 words total. Be specific with numbers and levels."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 400},
-            timeout=25,
-        )
-        resp.raise_for_status()
-        discussion = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        discussion = f"Roundtable unavailable: {e}"
+    discussion = ask(prompt, tier="fast", temperature=0.3, max_tokens=3000,
+                     label="economic.roundtable", fallback="Roundtable unavailable.")
 
     msg = (
         f"\U0001f9e0 <b>{event_type} ROUNDTABLE</b>\n"
@@ -303,7 +434,7 @@ def analyze_economic_release(event_type: str, scraped_data: str = None):
         f"- Edge (Flow/Sentiment): positioning, narrative\n"
         f"- Catalyst (Events): what comes next\n"
         f"- Arbiter (Judge): weighs all views, final verdict\n\n"
-        f"POSITION: 500x MU 380/400 bull call spread, expiry March 20, 2026.\n"
+        f"POSITION: {position_summary()}.\n"
         f"{data_context}\n"
         f"CRITICAL INSTRUCTIONS:\n"
         f"- Extract ONLY numbers that appear in the report text above\n"
@@ -319,27 +450,20 @@ def analyze_economic_release(event_type: str, scraped_data: str = None):
         f"Be specific about numbers. Only use figures from the report data."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 400},
-            timeout=25,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        analysis = f"Analysis unavailable: {e}"
+    analysis = ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+                   label="economic.release", fallback="Analysis unavailable.")
 
     emoji_map = {
-        "CPI": "\U0001f4ca", "NFP": "\U0001f4bc",
+        "CPI": "\U0001f4ca", "PPI": "\U0001f4ca", "PCE": "\U0001f4ca",
+        "NFP": "\U0001f4bc",
         "FOMC": "\U0001f3e6", "EARNINGS": "\U0001f4b0",
     }
     emoji = emoji_map.get(event_type, "\U0001f4c8")
 
     title_map = {
         "CPI": "CPI REPORT ANALYSIS",
+        "PPI": "PPI REPORT ANALYSIS",
+        "PCE": "PCE REPORT ANALYSIS",
         "NFP": "JOBS REPORT ANALYSIS",
         "FOMC": "FOMC DECISION ANALYSIS",
         "EARNINGS": "MU EARNINGS ANALYSIS",
@@ -378,28 +502,18 @@ def analyze_fomc_with_diff():
         f"You are a Fed watcher analyzing the new FOMC statement by comparing it to the previous one.\n\n"
         f"NEW STATEMENT:\n{latest[:1500]}\n"
         f"{diff_context}\n"
-        f"POSITION: 500x MU 380/400 bull call spread, expiry March 20, 2026.\n\n"
+        f"POSITION: {position_summary()}.\n\n"
         f"FORMAT (under 200 words):\n"
         f"1. KEY CHANGES: What specific words/phrases changed vs previous statement?\n"
         f"2. RATE DECISION: What did they decide? Target range?\n"
         f"3. DOT PLOT SIGNAL: Hawkish or dovish shift? How many cuts priced?\n"
         f"4. IMPACT ON MU: How does this affect semis/memory specifically?\n"
-        f"5. ACTION: What to do with the 380/400 spread?\n"
+        f"5. ACTION: What to do with the {POSITION['long_strike']}/{POSITION['short_strike']} spread?\n"
         f"Be specific about language changes."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 300},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        analysis = "FOMC analysis unavailable."
+    analysis = ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+                   label="economic.fomc", fallback="FOMC analysis unavailable.")
 
     msg = (
         f"\U0001f3e6 <b>FOMC STATEMENT ANALYSIS</b>\n"
@@ -521,7 +635,7 @@ def analyze_mu_earnings():
 
     prompt = (
         f"You are analyzing Micron's just-released earnings for a Telegram alert.\n\n"
-        f"POSITION: 500x MU 380/400 bull call spread, entry $11.897, expiry March 20, 2026.\n\n"
+        f"POSITION: {position_summary()}.\n\n"
         f"{context_block}"
         f"ACTUAL EARNINGS PRESS RELEASE:\n{report[:3000]}\n\n"
         f"CRITICAL INSTRUCTIONS:\n"
@@ -552,18 +666,8 @@ def analyze_mu_earnings():
         f"Keep it clean and scannable. Under 300 words."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 500},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        analysis = f"Earnings analysis unavailable: {e}"
+    analysis = ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+                   label="economic.mu_earnings", fallback="Earnings analysis unavailable.")
 
     msg = (
         f"\U0001f4b0 <b>MU EARNINGS REPORT ANALYSIS</b>\n"

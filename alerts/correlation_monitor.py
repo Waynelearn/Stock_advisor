@@ -7,7 +7,8 @@ import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_ET, DIVERGENCE_ZSCORE, VIX_ANOMALY_MU_PCT, VIX_ANOMALY_VIX_PCT
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, TZ_ET, DIVERGENCE_ZSCORE, VIX_ANOMALY_MU_PCT, VIX_ANOMALY_VIX_PCT
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".correlation_state.json")
@@ -182,39 +183,19 @@ def _analyze_divergence(mu_ret, soxx_ret, z_score, correlation) -> str:
         f"MU returned {mu_ret:+.2f}% today while SOXX returned {soxx_ret:+.2f}%. "
         f"Divergence z-score: {z_score:+.2f} (>1.5 = significant). "
         f"20-day correlation: {correlation:.2f}.\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 2 sentences: is MU leading or lagging? Stock-specific driver or sector rotation?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="correlation_monitor", fallback="Analysis unavailable.")
 
 
 def _analyze_vix_anomaly(mu_price, mu_chg, vix_price, vix_chg, scenario) -> str:
     prompt = (
         f"Unusual: MU ({mu_chg:+.2f}%) and VIX ({vix_chg:+.2f}%) are {scenario}. "
         f"MU at ${mu_price:.2f}, VIX at {vix_price:.1f}.\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 2 sentences: what's causing this? Warning sign or opportunity?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="correlation_monitor", fallback="Analysis unavailable.")

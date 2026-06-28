@@ -15,21 +15,24 @@ from zoneinfo import ZoneInfo
 import requests
 import yfinance as yf
 
-from .config import POSITION, DEEPSEEK_API_KEY, TZ_ET
+from .config import (
+    POSITION, DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, TZ_ET,
+    VOL_OI_RATIO_THRESHOLD, VOL_OI_RATIO_SWEEP, MIN_UNUSUAL_VOLUME,
+    PCR_SHIFT_THRESHOLD, IV_CHANGE_THRESHOLD, LIQUIDITY_SPREAD_THRESHOLD,
+)
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".options_flow_state.json")
 
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
-# Thresholds
-UNUSUAL_VOL_OI_RATIO = 3.0      # Volume/OI ratio to flag as unusual
-UNUSUAL_MIN_VOLUME = 100         # Minimum contract volume to consider
-OTHER_EXPIRY_MIN_VOLUME = 500    # Higher bar for non-position expiries
-OTHER_EXPIRY_VOL_OI = 5.0       # Higher vol/OI ratio for non-position expiries
-PCR_SHIFT_THRESHOLD = 0.3       # Alert when PCR moves this much
-LIQUIDITY_SPREAD_PCT = 10.0     # Alert when bid-ask spread exceeds this %
-IV_CHANGE_THRESHOLD = 5.0       # Alert when IV changes by this many percentage points
+# Local aliases (single source of truth lives in config.py)
+UNUSUAL_VOL_OI_RATIO = VOL_OI_RATIO_THRESHOLD
+UNUSUAL_MIN_VOLUME = MIN_UNUSUAL_VOLUME
+OTHER_EXPIRY_MIN_VOLUME = MIN_UNUSUAL_VOLUME * 5  # higher bar for non-position expiries
+OTHER_EXPIRY_VOL_OI = VOL_OI_RATIO_SWEEP
+LIQUIDITY_SPREAD_PCT = LIQUIDITY_SPREAD_THRESHOLD
 
 
 # ─── State Management ───────────────────────────────────────────────────────
@@ -269,25 +272,8 @@ def _deepseek_flow_analysis(unusual: list[dict]) -> str:
         f"What does it signal for my spread? Note any sweeps or OI changes."
     )
 
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 200,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "DeepSeek analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="options_flow", fallback="DeepSeek analysis unavailable.")
 
 
 # ─── Feature 7: Put/Call Ratio Trend ─────────────────────────────────────────

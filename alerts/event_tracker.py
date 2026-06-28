@@ -24,7 +24,8 @@ import requests
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY
+from .config import POSITION, position_summary, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".event_tracker_state.json")
@@ -450,7 +451,7 @@ def _assess_mention(event_name: str, text: str, source: str) -> dict:
         f'"{event_name}". Assess if it contains SUBSTANTIVE, market-moving '
         f"information about memory/semiconductors or is just noise/hype.\n\n"
         f"Post: \"{text[:600]}\"\n\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20, 2026.\n\n"
+        f"My position: {position_summary()}.\n\n"
         f"Respond in EXACTLY this format:\n"
         f"SUBSTANTIVE: YES or NO\n"
         f"RELEVANCE: HIGH, MEDIUM, or LOW\n"
@@ -458,22 +459,8 @@ def _assess_mention(event_name: str, text: str, source: str) -> dict:
     )
 
     try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 100,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"].strip()
+        content = ask(prompt, tier="fast", temperature=0.1, max_tokens=3000,
+                      label="event_tracker") or ""
 
         # Parse response
         is_sub = "SUBSTANTIVE: YES" in content.upper()

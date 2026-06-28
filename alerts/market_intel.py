@@ -6,8 +6,9 @@ import yfinance as yf
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_ET, PEERS, PEER_CORRELATIONS
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, TZ_ET, PEERS, PEER_CORRELATIONS
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".market_intel_state.json")
 
@@ -256,61 +257,31 @@ def _analyze_sympathy(peer_moves: str, mu_price: float) -> str:
     """DeepSeek analysis of peer sympathy implications."""
     prompt = (
         f"Semi peer stocks made big moves: {peer_moves}\n"
-        f"MU is at ${mu_price:.2f}. I hold 500x MU 380/400 bull call spreads expiring March 20.\n"
+        f"MU is at ${mu_price:.2f}. I hold {position_summary()}.\n"
         f"In 2 sentences: how will MU likely react? Is the peer move relevant to MU's fundamentals "
         f"(memory/HBM) or is it a different sub-sector?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="market_intel", fallback="Analysis unavailable.")
 
 
 def _analyze_short_interest(short_pct, short_ratio, shares_short, si_change) -> str:
     prompt = (
         f"MU short interest: {short_pct:.1f}% of float, ratio {short_ratio:.1f} days, "
         f"{shares_short:,.0f} shares short. {si_change}\n"
-        f"My position: MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 1-2 sentences: is this SI level bullish (squeeze potential) or bearish (smart money short)?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="market_intel", fallback="Analysis unavailable.")
 
 
 def _analyze_rotation(perf_str, semis_rank, semis_pct, total) -> str:
     prompt = (
         f"Today's sector performance:\n{perf_str}\n\n"
         f"Semis ranked #{semis_rank + 1} of {total} ({semis_pct:+.2f}%).\n"
-        f"My position: MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 2 sentences: is money flowing into or out of semis? Is the sector leading or lagging?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="market_intel", fallback="Analysis unavailable.")

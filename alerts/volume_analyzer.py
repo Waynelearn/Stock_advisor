@@ -8,10 +8,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .config import (
-    DEEPSEEK_API_KEY, POSITION, TZ_ET,
-    VOLUME_ANOMALY_RATIO, VOLUME_EXTREME_RATIO,
+    DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, position_summary, TZ_ET,
+    VOLUME_ANOMALY_RATIO, VOLUME_EXTREME_RATIO, VOLUME_DARK_POOL_PRICE_PCT,
 )
 from .bot import send_alert
+from .llm import ask
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".volume_state.json")
 
@@ -68,7 +69,7 @@ def check_volume_anomaly():
             # Classify the anomaly
             if vol_ratio >= VOLUME_EXTREME_RATIO:
                 anomaly_type = "EXTREME"
-            elif abs(price_chg_pct) < 1.0:
+            elif abs(price_chg_pct) < VOLUME_DARK_POOL_PRICE_PCT:
                 anomaly_type = "DARK POOL"  # High volume, small price move
             else:
                 anomaly_type = "BLOCK"
@@ -137,19 +138,9 @@ def _analyze_volume(context: str) -> str:
     prompt = (
         f"Volume anomalies detected in semi stocks: {context}\n"
         f"'Dark pool proxy' = high volume with small price impact (institutional accumulation/distribution).\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 2 sentences: is this likely accumulation (bullish) or distribution (bearish)? "
         f"What does the volume pattern suggest for MU?"
     )
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return "Analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="volume_analyzer", fallback="Analysis unavailable.")

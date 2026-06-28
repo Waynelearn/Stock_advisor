@@ -7,9 +7,10 @@ Features:
 
 Commands:
   /ask <question>  - Ask the Roundtable (9 persona debate)
+  /committee [end] - Catalysts to expiry + 9-persona verdict (optional YYYY-MM-DD)
   /price <ticker>  - Quick price check with sentiment
   /pnl             - P&L report with expiry table
-  /sim <scenario>  - Scenario simulator ("what if MU drops to 385")
+  /sim <scenario>  - Scenario simulator
   /spreads         - Get spread recommendations
   /journal         - Show trade journal
   /log <action> <details> - Log a trade
@@ -28,12 +29,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .config import (
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DEEPSEEK_API_KEY,
-    POSITION, TZ_SGT, TZ_ET, PEERS,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, STATE_RETENTION, TRUNCATION,
+    POSITION, position_summary, TZ_SGT, TZ_ET, PEERS,
 )
 from .bot import send_alert, get_message_log
 from .price_monitor import get_live_price, get_prev_close, estimate_spread_value
 from .trade_journal import log_trade, get_journal_summary, post_mortem
+from .llm import complete
 
 
 POLL_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
@@ -60,7 +62,7 @@ def _log_interaction(user_msg: str, response: str, msg_type: str = "freetext"):
     })
 
     # Keep last 500 interactions
-    log = log[-500:]
+    log = log[-STATE_RETENTION["interaction_log"]:]
     try:
         with open(INTERACTION_LOG, "w") as f:
             json.dump(log, f, indent=2)
@@ -115,9 +117,8 @@ def _get_full_context() -> str:
     dte = (date.fromisoformat(POSITION["expiry"]) - date.today()).days
 
     lines.append(
-        f"POSITION: 500x MU {POSITION['long_strike']}/{POSITION['short_strike']} "
-        f"bull call spread, entry ${entry}, expiry {POSITION['expiry']} ({dte} DTE).\n"
-        f"Current: MU ${mu_price:.2f}, Spread ~${spread_val:.2f}, P&L ${pnl:+,.0f}"
+        f"POSITION: {position_summary()} ({dte} DTE).\n"
+        f"Current: {POSITION['ticker']} ${mu_price:.2f}, Spread ~${spread_val:.2f}, P&L ${pnl:+,.0f}"
     )
 
     # VIX
@@ -217,44 +218,19 @@ def _send_reply(text: str, reply_to_message_id: int = None):
 # ─── Reply Handler ─────────────────────────────────────────────────────────
 
 def handle_reply(user_text: str, original_text: str) -> str:
-    """Handle a reply to a bot message. Uses original alert + full market context."""
-    # Clean original for context
+    """Handle a reply to a bot alert — answered by the grounded tool-using agent."""
+    from .llm.agent import run_agent
+
     original_clean = _strip_html(original_text)
-    if len(original_clean) > 1500:
-        original_clean = original_clean[:1500] + "\n[...truncated]"
+    if len(original_clean) > TRUNCATION["prompt_context"]:
+        original_clean = original_clean[:TRUNCATION["prompt_context"]] + "\n[...truncated]"
 
-    context = _get_full_context()
-
-    prompt = (
-        f"You are an expert trading assistant for a short-term options trader.\n\n"
-        f"MARKET CONTEXT:\n{context}\n\n"
-        f"The trader received this alert from their monitoring system:\n"
-        f"---\n{original_clean}\n---\n\n"
-        f"The trader replied with this question/comment:\n"
-        f"\"{user_text}\"\n\n"
-        f"Answer their question directly and concisely, referencing the specific alert data "
-        f"and current market context. "
-        f"Be actionable — if there's a trading implication, state it clearly. "
-        f"If they ask about their position, calculate the impact. "
-        f"Keep it under 200 words. Use plain text (no markdown)."
+    question = (
+        f"I received this alert from my monitoring system:\n---\n{original_clean}\n---\n\n"
+        f"My reply / question: {user_text}"
     )
-
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 300,
-            },
-            timeout=20,
-        )
-        resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"Analysis unavailable: {e}"
+    res = run_agent(question, label="reply")
+    answer = res.text if res.ok else f"Analysis unavailable: {res.error}"
 
     return (
         f"\U0001f4ac <b>REPLY</b>\n"
@@ -267,41 +243,16 @@ def handle_reply(user_text: str, original_text: str) -> str:
 # ─── Free Text Handler ─────────────────────────────────────────────────────
 
 def handle_freetext(text: str) -> str:
-    """Handle a free-text message (not a command, not a reply). General Q&A."""
-    context = _get_full_context()
+    """Handle a free-text question — answered by the grounded tool-using agent."""
+    from .llm.agent import run_agent
 
-    prompt = (
-        f"You are an expert trading assistant for a short-term options trader.\n\n"
-        f"MARKET CONTEXT:\n{context}\n\n"
-        f"The trader asks:\n\"{text}\"\n\n"
-        f"Answer directly and concisely using the live market data above. "
-        f"If it's about their position, give specific numbers. "
-        f"If it's a market question, reference the current prices and catalysts. "
-        f"If it's about strategy, be actionable with the upcoming events in mind. "
-        f"Under 200 words. Use plain text (no markdown)."
-    )
-
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 300,
-            },
-            timeout=20,
-        )
-        resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"Analysis unavailable: {e}"
+    res = run_agent(text, label="freetext")
+    answer = res.text if res.ok else f"Analysis unavailable: {res.error}"
 
     return (
         f"\U0001f4ac <b>ANSWER</b>\n"
         + "\u2500" * 20 + "\n\n"
-        f"<i>Q: {text[:100]}{'...' if len(text) > 100 else ''}</i>\n\n"
+        f"<i>Q: {text[:TRUNCATION['preview']]}{'...' if len(text) > TRUNCATION['preview'] else ''}</i>\n\n"
         f"{answer}\n\n"
         f"<code>#ANSWER</code>"
     )
@@ -373,6 +324,45 @@ def handle_command(text: str) -> str | None:
         from .watchlist import analyze_and_alert
         analyze_and_alert()
         return None  # sends its own alert
+    elif text == "/committee":
+        # Bare /committee — wait for the user's question. Don't fire any analysis.
+        return (
+            "\U0001f3db️ <b>Committee — what's your question?</b>\n"
+            "Send it like:\n"
+            "  <code>/committee will MU hit 760 by expiry?</code>\n"
+            "  <code>/committee should I close half before NVDA earnings?</code>\n\n"
+            "<i>Tip:</i> use <code>/catalysts</code> for the standard catalyst rundown "
+            "without a question."
+        )
+    elif text.startswith("/committee "):
+        # /committee <date>     → custom end date for the standard analysis
+        # /committee <question> → committee answers a free-form question
+        from datetime import date as _date
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from list_catalysts import deliver_committee_to_telegram
+        arg = text[len("/committee"):].strip()
+        end = None
+        question = None
+        try:
+            end = _date.fromisoformat(arg)
+        except ValueError:
+            question = arg
+        try:
+            deliver_committee_to_telegram(end=end, question=question)
+        except Exception as e:
+            return f"⚠️ Committee call failed: {e}"
+        return None
+    elif text == "/catalysts":
+        # The old "bare /committee" behaviour — catalyst list + standard verdict
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from list_catalysts import deliver_committee_to_telegram
+        try:
+            deliver_committee_to_telegram()
+        except Exception as e:
+            return f"⚠️ Catalysts call failed: {e}"
+        return None
     elif text == "/history":
         return _format_message_log()
     elif text == "/help":
@@ -381,6 +371,8 @@ def handle_command(text: str) -> str | None:
             + "\u2500" * 20 + "\n\n"
             "<b>Reply to any alert</b> to ask a follow-up question\n\n"
             "/ask &lt;question&gt; - Ask the Roundtable\n"
+            "/committee &lt;question&gt; - Committee answers a specific question\n"
+            "/catalysts - Catalyst list + standard verdict (to expiry)\n"
             "/price [ticker] - Quick price check\n"
             "/pnl - P&amp;L report with expiry table\n"
             "/sim &lt;scenario&gt; - Scenario simulator\n"
@@ -400,36 +392,24 @@ def handle_ask(question: str) -> str:
     """Ask the 9-persona roundtable a question."""
     context = _get_full_context()
 
-    prompt = (
-        f"You are running a roundtable of 9 expert personas for a short-term options trader.\n\n"
-        f"PERSONAS:\n"
-        f"- Rex (Bull): finds upside catalysts\n"
-        f"- Vera (Bear): identifies risks\n"
-        f"- Sigma (Quant): probability and numbers\n"
-        f"- Atlas (Macro): Fed, geopolitics\n"
-        f"- Chart (Tech): price levels\n"
-        f"- Flux (Market Regime): risk-on/off\n"
-        f"- Edge (Flow/Sentiment): options flow, narrative\n"
-        f"- Catalyst (Events): upcoming catalysts\n"
-        f"- Arbiter (Judge): weighs all views, final verdict\n\n"
-        f"MARKET CONTEXT:\n{context}\n\n"
-        f"USER QUESTION: {question}\n\n"
-        f"Each persona gives a 1-line response using the live market data above. "
-        f"Arbiter gives VERDICT. Under 200 words."
+    system = (
+        "You are running a roundtable of 9 expert personas for a short-term options trader.\n\n"
+        "PERSONAS:\n"
+        "- Rex (Bull): finds upside catalysts\n"
+        "- Vera (Bear): identifies risks\n"
+        "- Sigma (Quant): probability and numbers\n"
+        "- Atlas (Macro): Fed, geopolitics\n"
+        "- Chart (Tech): price levels\n"
+        "- Flux (Market Regime): risk-on/off\n"
+        "- Edge (Flow/Sentiment): options flow, narrative\n"
+        "- Catalyst (Events): upcoming catalysts\n"
+        "- Arbiter (Judge): weighs all views, final verdict\n\n"
+        "Each persona gives a 1-line response using the live market data provided. "
+        "Arbiter gives VERDICT. Under 200 words."
     )
-
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 300},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        analysis = f"Roundtable unavailable: {e}"
+    user = f"MARKET CONTEXT:\n{context}\n\nUSER QUESTION: {question}"
+    resp = complete(user, tier="reasoning", system=system, max_tokens=1500, label="roundtable")
+    analysis = resp.text if resp.ok else f"Roundtable unavailable: {resp.error}"
 
     return (
         f"\U0001f9e0 <b>ROUNDTABLE</b>\n"
@@ -499,27 +479,15 @@ def handle_sim(scenario: str) -> str:
             f"\nSimulated at ${target_price:.2f}: Spread ${sim_spread:.2f}, P&L ${sim_pnl:+,.0f}"
         )
 
-    prompt = (
-        f"You are a scenario analyst for a short-term options trader.\n\n"
-        f"POSITION: 500x MU 380/400 bull call spread, entry $11.897, expiry March 20, 2026.\n"
-        f"{sim_context}\n\n"
-        f"SCENARIO: {scenario}\n\n"
-        f"In 3-4 sentences: What is the probability of this scenario? "
-        f"What would the P&L impact be? What should the trader do? Be specific with numbers."
+    system = (
+        "You are a scenario analyst for a short-term options trader. "
+        "In 3-4 sentences: what is the probability of the scenario, what would the "
+        "P&L impact be, and what should the trader do? Be specific with numbers."
     )
-
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 200},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        analysis = f"Simulation unavailable: {e}"
+    user = f"POSITION: {position_summary()}.\n{sim_context}\n\nSCENARIO: {scenario}"
+    resp = complete(user, tier="reasoning", system=system, max_tokens=1024,
+                    effort="medium", label="sim")
+    analysis = resp.text if resp.ok else f"Simulation unavailable: {resp.error}"
 
     lines = [
         "\U0001f3b2 <b>SCENARIO SIM</b>",
@@ -579,9 +547,14 @@ def handle_pnl() -> str:
 
     status = "\U0001f4b9" if current_pnl > 0 else "\U0001f4c9"
 
-    # P&L table at expiry
-    prices = list(range(370, 415, 5))
-    for special in [round(mu_price), round(breakeven)]:
+    # P&L table at expiry — span centered on spot, covering both strikes.
+    # Pick step ~0.5% of spot (rounded to a clean increment), span ±10% of spot.
+    span = max(short_strike - long_strike + 20, int(mu_price * 0.10))
+    step = max(1, int(round(mu_price * 0.005)))
+    lo = int(round(min(mu_price, long_strike) - span / 2))
+    hi = int(round(max(mu_price, short_strike) + span / 2))
+    prices = list(range(lo, hi + 1, step))
+    for special in [round(mu_price), round(breakeven), long_strike, short_strike]:
         if special not in prices:
             prices.append(special)
     prices.sort()
@@ -692,6 +665,60 @@ def _get_bot_id() -> int | None:
         return None
 
 
+def _remove_persistent_keyboard():
+    """One-shot helper: clear the reply keyboard if a previous /menu installed it.
+
+    Telegram's reply keyboard sticks around until explicitly removed. We send a
+    near-invisible message with ReplyKeyboardRemove on bot startup so any prior
+    keyboard is cleared without leaving a visible artifact.
+    """
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": "​",  # zero-width space — no visible content
+        "reply_markup": json.dumps({"remove_keyboard": True}),
+    }
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json=payload, timeout=10,
+        )
+    except Exception:
+        pass
+
+
+_BOT_COMMANDS = [
+    {"command": "ask",        "description": "Ask the 9-persona Roundtable"},
+    {"command": "committee",  "description": "Committee answers a question (add it after the command)"},
+    {"command": "catalysts",  "description": "Catalyst list + verdict (no question needed)"},
+    {"command": "price",      "description": "Quick price check (default: position ticker)"},
+    {"command": "pnl",        "description": "P&L report with expiry table"},
+    {"command": "sim",        "description": "Scenario simulator"},
+    {"command": "spreads",    "description": "Spread recommendations"},
+    {"command": "journal",    "description": "Show trade journal"},
+    {"command": "log",        "description": "Log a trade event: /log <action> <notes>"},
+    {"command": "postmortem", "description": "Trade post-mortem"},
+    {"command": "scan",       "description": "Watchlist scanner"},
+    {"command": "history",    "description": "Recent message log"},
+    {"command": "help",       "description": "Show all commands"},
+]
+
+
+def _setup_bot_commands():
+    """Register the / autocomplete menu with Telegram.
+
+    Idempotent — safe to call on every bot startup. Telegram clients pick up
+    the new list within a few seconds of being sent.
+    """
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyCommands",
+            json={"commands": _BOT_COMMANDS}, timeout=10,
+        )
+        print("[BOT] Registered command menu with Telegram")
+    except Exception as e:
+        print(f"[BOT COMMANDS ERROR] {e}")
+
+
 def run_polling():
     """Main polling loop. Run this as a background process.
 
@@ -701,6 +728,8 @@ def run_polling():
     3. Free text → general question answered by DeepSeek
     """
     print("[BOT] Interactive bot polling started...")
+    _setup_bot_commands()
+    _remove_persistent_keyboard()
     offset = _load_offset()
     bot_id = _get_bot_id()
     print(f"[BOT] Bot ID: {bot_id}")

@@ -5,7 +5,7 @@ import yfinance as yf
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT
+from .config import POSITION, TZ_ET, TZ_SGT, HYPERSCALER_DIVERGENCE_PCT
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".hyperscaler_state.json")
@@ -177,7 +177,7 @@ def get_hyperscaler_summary() -> str:
     if hyper_5d and mu_d:
         avg_h5 = sum(hyper_5d) / len(hyper_5d)
         gap = mu_d["ret_5d"] - avg_h5
-        if abs(gap) > 1.0:
+        if abs(gap) > HYPERSCALER_DIVERGENCE_PCT:
             label = "outperforming" if gap > 0 else "underperforming"
             lines.append(f"\nMU {label} hyperscalers by {abs(gap):.1f}% (5d)")
 

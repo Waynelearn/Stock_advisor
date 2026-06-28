@@ -6,7 +6,8 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_ET
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, POSITION, position_summary, TZ_ET
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".insider_state.json")
@@ -136,21 +137,11 @@ def _analyze_insider_trade(description: str, names: list[str]) -> str:
     prompt = (
         f"SEC Form 4 filing for Micron Technology (MU): {description}\n"
         f"Filer(s): {names_str}\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 1-2 sentences: is this insider buying or selling? What does it signal for MU near-term?"
     )
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return ""
+    return ask(prompt, tier="reasoning", temperature=0.2, max_tokens=1500,
+               label="insider_tracker", fallback="")
 
 
 def check_insider_trades():
@@ -297,21 +288,11 @@ def _analyze_congressional_trade(trade: dict) -> str:
         f"Congressional trade disclosure: {trade['politician']} "
         f"{trade['type']} MU/Micron on {trade['date']}, amount: {trade['amount']}.\n"
         f"Source: {trade['source']}.\n"
-        f"My position: 500x MU 380/400 bull call spread expiring March 20.\n"
+        f"My position: {position_summary()}.\n"
         f"In 1-2 sentences: is this significant? Does this politician sit on any relevant committee?"
     )
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.2, "max_tokens": 100},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return ""
+    return ask(prompt, tier="reasoning", temperature=0.2, max_tokens=1500,
+               label="insider_tracker", fallback="")
 
 
 def check_congressional_trades():

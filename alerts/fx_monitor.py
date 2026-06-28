@@ -10,7 +10,11 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT
+from .config import (
+    POSITION, TZ_ET, TZ_SGT,
+    FX_MOVE_PCT as FX_MOVE_THRESHOLD,
+    FX_DXY_MOVE_PCT as DXY_MOVE_THRESHOLD,
+)
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".fx_monitor_state.json")
@@ -22,10 +26,6 @@ FX_PAIRS = {
     "CNY=X": {"name": "USD/CNY", "impact": "Yuan moves signal China trade tensions or stimulus expectations."},
     "EUR=X": {"name": "EUR/USD", "impact": "Euro strength = dollar weakness = generally positive for US exporters."},
 }
-
-# Thresholds
-FX_MOVE_THRESHOLD = 0.5     # Alert if any pair moves >0.5%
-DXY_MOVE_THRESHOLD = 0.3    # DXY is less volatile, lower threshold
 
 
 def load_state() -> dict:

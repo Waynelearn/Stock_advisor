@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
-from .config import DEEPSEEK_API_KEY, TZ_SGT
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, TZ_SGT, position_summary
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".youtube_state.json")
@@ -434,7 +435,7 @@ def _summarize_video(title: str, channel: str, transcript: str, tier: int, match
 
     prompt = (
         f"Summarize this YouTube video for a trader holding "
-        f"500x MU 380/400 bull call spread expiring March 20, 2026.\n\n"
+        f"{position_summary()}.\n\n"
         f"VIDEO: \"{title}\" by {channel}\n"
         f"CONTEXT: {tier_context.get(tier, '')}\n"
         f"KEYWORDS: {', '.join(matched_keywords)}\n\n"
@@ -449,19 +450,8 @@ def _summarize_video(title: str, channel: str, transcript: str, tier: int, match
     )
 
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 200,
-            },
-            timeout=25,
-        )
-        resp.raise_for_status()
-        summary = resp.json()["choices"][0]["message"]["content"].strip()
+        summary = ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+                      label="youtube") or "Summary unavailable"
 
         # Extract discovered catalyst if present
         _extract_catalyst_from_summary(summary)

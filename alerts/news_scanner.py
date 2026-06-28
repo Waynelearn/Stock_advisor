@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from .config import TZ_SGT
+from .config import TZ_SGT, STATE_RETENTION
 from .bot import send_alert
 from .summarizer import summarize_article, fetch_article, batch_sentiment
 
@@ -180,8 +180,8 @@ def check_news():
     first_run = state.get("seeded") is not True
 
     # Cleanup old hashes (keep last 500)
-    if len(seen) > 500:
-        state["seen_hashes"] = state["seen_hashes"][-300:]
+    if len(seen) > STATE_RETENTION["news_ids"]:
+        state["seen_hashes"] = state["seen_hashes"][-(STATE_RETENTION["news_ids"] // 2):]
         seen = set(state["seen_hashes"])
 
     new_articles = []
@@ -218,7 +218,7 @@ def check_news():
             })
 
     # Cleanup seen_urls list (keep last 300)
-    if len(state.get("seen_urls", [])) > 500:
+    if len(state.get("seen_urls", [])) > STATE_RETENTION["news_ids"]:
         state["seen_urls"] = state["seen_urls"][-300:]
 
     if first_run:

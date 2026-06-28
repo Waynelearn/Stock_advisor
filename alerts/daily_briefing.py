@@ -7,9 +7,14 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, CATALYSTS, TZ_ET, TZ_SGT, FUTURES, PEERS, DEEPSEEK_API_KEY
+from .config import (
+    POSITION, position_summary, position_moneyness,
+    CATALYSTS, TZ_ET, TZ_SGT, FUTURES, PEERS,
+    DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, BIG_MOVE_PCT, DAILY_STABLE_PCT, DAILY_MOMENTUM_PCT, DAILY_TRENDING_PCT,
+)
 from .bot import send_daily_briefing
 from .price_monitor import estimate_spread_value
+from .llm import ask, complete
 from .news_scanner import get_recent_headlines
 
 EARNINGS_STATE_FILE = os.path.join(os.path.dirname(__file__), ".earnings_state.json")
@@ -112,9 +117,8 @@ def deepseek_daily_analysis(mode: str = "recap") -> str:
     position_block = ""
     if POSITION.get("contracts"):
         position_block = (
-            f"POSITION: {POSITION['contracts']}x MU {POSITION['long_strike']}/{POSITION['short_strike']} bull call spread, "
-            f"entry ${POSITION['entry_price']}, expiry {POSITION['expiry']}. "
-            f"Breakeven ${POSITION['breakeven']}. Max profit if MU > ${POSITION['short_strike']} at expiry.\n\n"
+            f"POSITION: {position_summary()}. "
+            f"Max profit if {POSITION['ticker']} > ${POSITION['short_strike']} at expiry.\n\n"
         )
         spread_line = (
             f"Spread value: ${pos.get('spread_value', 0):.2f}, P&L: ${pos.get('pnl', 0):+,.0f}, "
@@ -153,25 +157,8 @@ def deepseek_daily_analysis(mode: str = "recap") -> str:
         f"Keep total under 200 words. No fluff."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": 250,
-            },
-            timeout=20,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"Analysis unavailable: {e}"
+    return ask(prompt, tier="reasoning", temperature=0.3, max_tokens=2000,
+               label="daily_briefing", fallback="Analysis unavailable.")
 
 
 def get_daily_data(ticker: str) -> dict | None:
@@ -242,10 +229,10 @@ def detect_earnings_result() -> dict | None:
     except Exception:
         return None
 
-    # Quick heuristic from price move
-    if move_pct > 3:
+    # Quick heuristic from price move (uses BIG_MOVE_PCT from config)
+    if move_pct > BIG_MOVE_PCT:
         heuristic = "BEAT"
-    elif move_pct < -3:
+    elif move_pct < -BIG_MOVE_PCT:
         heuristic = "MISS"
     else:
         heuristic = "INLINE"
@@ -284,32 +271,31 @@ def _deepseek_earnings_analysis(move_pct: float, price: float) -> str:
         f"Start your response with BEAT, MISS, or INLINE."
     )
     try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1,
-                "max_tokens": 150,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+        r = complete(prompt, tier="reasoning", temperature=0.1, max_tokens=800,
+                     label="daily_briefing.reaction")
+        if not r.ok or not r.text:
+            raise RuntimeError(r.error or "empty")
+        return r.text
     except Exception:
-        if move_pct > 3:
+        if move_pct > BIG_MOVE_PCT:
             return "BEAT. Strong positive reaction suggests earnings exceeded expectations."
-        elif move_pct < -3:
+        elif move_pct < -BIG_MOVE_PCT:
             return "MISS. Negative reaction suggests earnings or guidance disappointed."
         return "INLINE. Muted reaction suggests results met expectations."
 
 
 def get_framework_action(price: float, days_to_expiry: int) -> str:
-    """Get the decision framework recommendation. Earnings-aware after March 18."""
+    """Get the decision framework recommendation.
+
+    Position-agnostic: uses position_moneyness() so the cascade survives
+    any future strike change. Moneyness:
+       +1.0 = price at short strike (max-profit zone)
+        0.0 = price at breakeven
+       -1.0 = price one spread-width below breakeven
+    """
+    short_strike = POSITION["short_strike"]
+    breakeven = POSITION["breakeven"]
+    m = position_moneyness(price)
 
     # Check if earnings have fired
     earnings = detect_earnings_result()
@@ -319,47 +305,47 @@ def get_framework_action(price: float, days_to_expiry: int) -> str:
         move = earnings.get("move_pct", 0)
 
         if result == "BEAT":
-            if price > 400:
-                return f"\U0001f389 Earnings BEAT ({move:+.1f}%) \u2014 HOLD to expiry, you won"
-            elif price > 392:
-                return f"\U0001f389 Earnings BEAT ({move:+.1f}%) \u2014 HOLD, drift to $400 likely"
-            elif price > 385:
-                return f"\u26a0\ufe0f Earnings BEAT ({move:+.1f}%) but not enough \u2014 consider selling"
+            if m >= 0.9:
+                return f"\U0001f389 Earnings BEAT ({move:+.1f}%) \u2014 HOLD to expiry, at max profit (${short_strike})"
+            elif m >= 0.5:
+                return f"\U0001f389 Earnings BEAT ({move:+.1f}%) \u2014 HOLD, drift to ${short_strike} likely"
+            elif m >= 0.0:
+                return f"\u26a0\ufe0f Earnings BEAT ({move:+.1f}%) \u2014 ITM but not max; consider partial sell"
             else:
-                return f"\u26a0\ufe0f Earnings BEAT ({move:+.1f}%) but MU still below $385 \u2014 SELL, won't reach $400 by expiry"
+                return f"\u26a0\ufe0f Earnings BEAT ({move:+.1f}%) but still OTM (${price:.0f} < ${breakeven:.2f}) \u2014 SELL, unlikely to recover"
         elif result == "MISS":
             return f"\U0001f534 Earnings MISS ({move:+.1f}%) \u2014 SELL EVERYTHING at open. No second catalyst."
         else:  # INLINE
-            if price > 395:
-                return f"\U0001f7e1 Earnings INLINE ({move:+.1f}%) \u2014 HOLD, close to $400"
-            elif price > 385:
-                return f"\U0001f7e1 Earnings INLINE ({move:+.1f}%) \u2014 risky hold, may not reach $400"
+            if m >= 0.5:
+                return f"\U0001f7e1 Earnings INLINE ({move:+.1f}%) \u2014 HOLD, close to max-profit"
+            elif m >= 0.0:
+                return f"\U0001f7e1 Earnings INLINE ({move:+.1f}%) \u2014 risky hold, may not reach ${short_strike}"
             else:
                 return f"\U0001f7e1 Earnings INLINE ({move:+.1f}%) \u2014 SELL, not enough momentum"
 
-    # Pre-earnings logic (unchanged)
+    # Pre-earnings / non-earnings logic \u2014 also moneyness-based
     if days_to_expiry > 3:
-        return "HOLD - earnings catalyst hasn't fired yet"
+        return "HOLD - catalyst window still open"
     elif days_to_expiry == 3:
-        if price > 400:
-            return "HOLD - at max profit"
-        elif price > 390:
-            return "HOLD - earnings beat gets you there"
-        elif price > 385:
-            return "DECISION POINT - do you believe in the beat?"
-        elif price > 370:
-            return "SELL HALF - even a beat barely reaches $400"
+        if m >= 0.9:
+            return f"HOLD - at max profit (${short_strike})"
+        elif m >= 0.4:
+            return "HOLD - ITM, drift can carry it"
+        elif m >= 0.0:
+            return "DECISION POINT - barely ITM, do you believe in the next move?"
+        elif m >= -0.5:
+            return "SELL HALF - OTM, recovery is a stretch"
         else:
             return "SELL ALL - insufficient recovery potential"
     elif days_to_expiry == 2:
-        return "DO NOT SELL - FOMC + earnings day, wait for results"
+        return "DO NOT SELL - macro + catalyst day, wait for results"
     elif days_to_expiry == 1:
-        if price > 400:
-            return "HOLD to expiry - you won"
-        elif price > 392:
-            return "HOLD - 1 day drift possible"
+        if m >= 0.9:
+            return f"HOLD to expiry - you won (price ${price:.2f} >= short ${short_strike})"
+        elif m >= 0.05:
+            return "HOLD - 1 day drift possible, ITM"
         else:
-            return "SELL - catalyst fired, insufficient recovery"
+            return "SELL - 1 day left, OTM, no time for recovery"
     else:
         return "EXPIRY DAY - settles at intrinsic value"
 
@@ -404,7 +390,7 @@ def build_briefing() -> str:
 
     # Helpers
     def chg_arrow(pct):
-        if pct > 0.5:
+        if pct > DAILY_STABLE_PCT:
             return "\U0001f7e2"  # 🟢
         elif pct < -0.5:
             return "\U0001f534"  # 🔴
@@ -533,16 +519,16 @@ def build_morning_recap() -> str:
         action = get_framework_action(mu_price, trading_days)
 
     def chg_arrow(pct):
-        if pct > 0.5:
+        if pct > DAILY_STABLE_PCT:
             return "\U0001f7e2"
         elif pct < -0.5:
             return "\U0001f534"
         return "\U0001f7e1"
 
     # Determine session verdict
-    if change_pct > 1.5:
+    if change_pct > DAILY_MOMENTUM_PCT:
         verdict = "\U0001f389 Strong session"
-    elif change_pct > 0.3:
+    elif change_pct > DAILY_TRENDING_PCT:
         verdict = "\u2705 Positive session"
     elif change_pct > -0.3:
         verdict = "\u2796 Flat session"

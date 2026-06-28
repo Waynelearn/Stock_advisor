@@ -6,7 +6,10 @@ import yfinance as yf
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT
+from .config import (
+    POSITION, TZ_ET, TZ_SGT,
+    MEMORY_DIVERGENCE_HIGH_PCT, MEMORY_DIVERGENCE_LOW_PCT, MEMORY_VOL_RATIO,
+)
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".memory_pricing_state.json")
@@ -91,9 +94,9 @@ def _check_divergence(data: dict) -> list:
 
     mu, wdc = data.get("MU"), data.get("WDC")
     if mu and wdc:
-        if wdc["wow"] > 3.0 and mu["wow"] < -1.0:
+        if wdc["wow"] > MEMORY_DIVERGENCE_HIGH_PCT and mu["wow"] < MEMORY_DIVERGENCE_LOW_PCT:
             alerts.append(f"WDC {wdc['wow']:+.1f}% vs MU {mu['wow']:+.1f}% WoW — NAND strong, DRAM weak")
-        elif mu["wow"] > 3.0 and wdc["wow"] < -1.0:
+        elif mu["wow"] > MEMORY_DIVERGENCE_HIGH_PCT and wdc["wow"] < MEMORY_DIVERGENCE_LOW_PCT:
             alerts.append(f"MU {mu['wow']:+.1f}% vs WDC {wdc['wow']:+.1f}% WoW — DRAM/HBM dominant, NAND lagging")
 
     return alerts
@@ -147,7 +150,7 @@ def check_memory_pricing():
         d = data[ticker]
         wow_flag = " !" if abs(d["wow"]) >= WOW_MOMENTUM_ALERT else ""
         mom_flag = " !" if abs(d["mom"]) >= MOM_MOMENTUM_ALERT else ""
-        vol_flag = " H" if d["vol_ratio"] > 1.5 else ""
+        vol_flag = " H" if d["vol_ratio"] > MEMORY_VOL_RATIO else ""
         lines.append(
             f"{d['name']:<18} {d['price']:>8.2f} {d['wow']:>+7.1f}%{wow_flag}"
             f" {d['mom']:>+7.1f}%{mom_flag} {d['vol_ratio']:>4.1f}x{vol_flag}"
@@ -155,9 +158,9 @@ def check_memory_pricing():
 
     mu, hynix = data.get("MU"), data.get("000660.KS")
     if mu and hynix:
-        if hynix["wow"] > 3.0 and mu["wow"] > 3.0:
+        if hynix["wow"] > MEMORY_DIVERGENCE_HIGH_PCT and mu["wow"] > MEMORY_DIVERGENCE_HIGH_PCT:
             lines.append("\nSignal: Memory broadly strong — HBM/DRAM pricing power")
-        elif hynix["wow"] > 3.0 and mu["wow"] < 0:
+        elif hynix["wow"] > MEMORY_DIVERGENCE_HIGH_PCT and mu["wow"] < 0:
             lines.append("\nSignal: SK Hynix leading, MU lagging — watch for catch-up")
         elif hynix["wow"] < -3.0 and mu["wow"] < -3.0:
             lines.append("\nSignal: Memory weak — check for demand/pricing concerns")

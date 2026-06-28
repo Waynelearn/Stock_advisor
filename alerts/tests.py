@@ -38,7 +38,7 @@ class TestConfig(unittest.TestCase):
     def test_config_imports(self):
         from alerts.config import (
             TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DEEPSEEK_API_KEY,
-            POSITION, PRICE_LEVELS, VIX_LEVELS, FUTURES, PEERS,
+            POSITION, get_price_levels, VIX_LEVELS, FUTURES, PEERS,
             TZ_ET, TZ_SGT, CATALYSTS,
         )
         self.assertTrue(TELEGRAM_BOT_TOKEN)
@@ -52,11 +52,12 @@ class TestConfig(unittest.TestCase):
         self.assertIn("entry_price", POSITION)
         self.assertIn("expiry", POSITION)
         self.assertIn("breakeven", POSITION)
-        # Price levels should include position strikes when active
+        # Generated levels should always include strikes (deterministic; no live spot needed)
+        levels_at_breakeven = get_price_levels(spot=POSITION["breakeven"])
         if POSITION.get("long_strike"):
-            self.assertIn(POSITION["long_strike"], PRICE_LEVELS)
+            self.assertIn(float(POSITION["long_strike"]), levels_at_breakeven)
         if POSITION.get("short_strike"):
-            self.assertIn(POSITION["short_strike"], PRICE_LEVELS)
+            self.assertIn(float(POSITION["short_strike"]), levels_at_breakeven)
         self.assertIn(25, VIX_LEVELS)
         self.assertIn("ES=F", FUTURES)
         self.assertIn("NVDA", PEERS)

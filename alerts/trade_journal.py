@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_SGT
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_PRO, POSITION, position_summary, TZ_SGT
+from .llm import ask
 from .bot import send_alert
 from .price_monitor import get_live_price, estimate_spread_value
 
@@ -118,25 +119,15 @@ def post_mortem() -> str:
 
     prompt = (
         f"You are a trading coach reviewing a completed options trade.\n\n"
-        f"TRADE: 500x MU 380/400 bull call spread, entry $11.897, expiry March 20, 2026\n"
+        f"TRADE: {position_summary()}\n"
         f"Current: MU ${mu_price:.2f}, Spread ${spread_val:.2f}, P&L ${pnl:+,.0f}\n\n"
         f"JOURNAL ENTRIES:\n{journal_str}\n"
         f"In 3-4 sentences: What went right? What went wrong? Key lessons for next trade? "
         f"Grade the trade A-F."
     )
 
-    try:
-        resp = requests.post(
-            "https://api.deepseek.com/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "temperature": 0.3, "max_tokens": 200},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        analysis = resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        analysis = "Post-mortem analysis unavailable."
+    analysis = ask(prompt, tier="reasoning", temperature=0.3, max_tokens=1500,
+                   label="trade_journal.postmortem", fallback="Post-mortem analysis unavailable.")
 
     msg = (
         f"\U0001f50d <b>POST-MORTEM</b>\n"

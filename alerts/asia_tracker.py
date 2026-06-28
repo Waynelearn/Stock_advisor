@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 import requests
 import yfinance as yf
 
-from .config import DEEPSEEK_API_KEY, POSITION, TZ_SGT, TZ_ET
+from .config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST, POSITION, TZ_SGT, TZ_ET
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".asia_state.json")
@@ -126,26 +127,8 @@ def get_deepseek_analysis(changes: dict, mu_close: float | None) -> str:
         "Be specific and actionable."
     )
 
-    try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2,
-                "max_tokens": 200,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"[ASIA DEEPSEEK ERROR] {e}")
-        return "DeepSeek analysis unavailable."
+    return ask(prompt, tier="fast", temperature=0.2, max_tokens=3000,
+               label="asia_tracker", fallback="DeepSeek analysis unavailable.")
 
 
 def build_message(changes: dict, mu_close: float | None, analysis: str) -> str:

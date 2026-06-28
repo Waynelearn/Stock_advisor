@@ -9,7 +9,8 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .config import POSITION, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY
+from .config import POSITION, TZ_ET, TZ_SGT, DEEPSEEK_API_KEY, DEEPSEEK_MODEL_FAST
+from .llm import ask
 from .bot import send_alert
 
 STATE_FILE = os.path.join(os.path.dirname(__file__), ".geopolitical_state.json")
@@ -226,16 +227,8 @@ Respond in this EXACT JSON format:
 Only return the JSON, nothing else."""
 
     try:
-        headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
-        payload = {
-            "model": "deepseek-chat",
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 300,
-            "temperature": 0.3,
-        }
-        resp = requests.post(DEEPSEEK_URL, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"].strip()
+        content = ask(prompt, tier="fast", temperature=0.3, max_tokens=3000,
+                      label="geopolitical")
 
         # Parse JSON from response
         json_match = re.search(r'\{.*\}', content, re.DOTALL)
